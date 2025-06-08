@@ -1,0 +1,21 @@
+# sbt
+target/
+project/target/
+.bloop/
+
+# IDE
+.idea/
+.vscode/
+.metals/
+.bsp/
+
+# OS
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Misc
+*.jar
+*.class 
