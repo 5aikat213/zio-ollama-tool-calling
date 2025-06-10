@@ -14,7 +14,7 @@ object ToolExecutor:
   val live: ZLayer[WebSearch with WebPageExtractor with PythonExecutor, Nothing, ToolExecutor] =
     ZLayer.fromFunction(ToolExecutorLive.apply)
 
-case class ToolExecutorLive(webSearch: WebSearch, webPageExtractor: WebPageExtractor, pythonExecutor: PythonExecutor) extends ToolExecutor:
+final case class ToolExecutorLive(webSearch: WebSearch, webPageExtractor: WebPageExtractor, pythonExecutor: PythonExecutor) extends ToolExecutor {
   def execute(toolCall: OllamaToolCall): IO[Throwable, OllamaMessage] =
     toolCall.function.name match
       case "web_search" =>
@@ -40,7 +40,7 @@ case class ToolExecutorLive(webSearch: WebSearch, webPageExtractor: WebPageExtra
           .mapError(e => new IllegalArgumentException(s"Failed to parse arguments for python_execute: $e"))
           .flatMap { args =>
             for {
-              _ <- ZIO.logInfo(s"Executing tool 'python_execute' with code snippet")
+              _ <- ZIO.logInfo(s"Executing tool 'python_execute' with code snippet : ${args.code}")
               result <- pythonExecutor.execute(args)
             } yield OllamaMessage(role = "tool", content = result.toJson, tool_calls = Some(List(toolCall)))
           }
@@ -91,3 +91,4 @@ case class ToolExecutorLive(webSearch: WebSearch, webPageExtractor: WebPageExtra
       )
     )
   )
+}

@@ -1,5 +1,5 @@
 package com.exploreai.client
-import com.exploreai.core.{OllamaChatRequest, OllamaChatResponse}
+import com.exploreai.core.{OllamaChatRequest, OllamaChatResponse, OllamaMessage, OllamaModel}
 import zio._
 import zio.http.{Body, Client, Request, URL}
 import zio.json._
@@ -19,24 +19,36 @@ object OllamaClient {
 case class OllamaClientLive(client: Client) extends OllamaClient {
   private val OLLAMA_API_URL = "http://localhost:11434/api/chat"
 
-  def chat(request: OllamaChatRequest): IO[Throwable, OllamaChatResponse] = ZIO.scoped {
-    for {
-      _ <- ZIO.logInfo(s"Sending non-streaming request to Ollama model: ${request.model}")
-      response <- client.request(Request.post(URL.decode(OLLAMA_API_URL).toOption.get, Body.fromString(request.toJson)))
-        .flatMap { res =>
-          if (res.status.isSuccess) res.body.asString
-          else res.body.asString.flatMap(body => ZIO.fail(new Exception(s"Ollama request failed with status ${res.status}: $body")))
+  private def prepareRequest(request: OllamaChatRequest): OllamaChatRequest = {
+    request.copy(think = OllamaModel.supportsThinking(request.model))
+  }
+
+  def chat(request: OllamaChatRequest): IO[Throwable, OllamaChatResponse] = {
+    val finalRequest = prepareRequest(request)
+    ZIO.scoped {
+      for {
+        _ <- ZIO.logInfo(s"Sending non-streaming request to Ollama model: ${finalRequest.model}")
+        responseString <- client.request(Request.post(URL.decode(OLLAMA_API_URL).toOption.get, Body.fromString(finalRequest.copy(stream = false).toJson)))
+          .flatMap { res =>
+            if (res.status.isSuccess) res.body.asString
+            else res.body.asString.flatMap(body => ZIO.fail(new Exception(s"Ollama request failed with status ${res.status}: $body")))
+          }
+        _ <- ZIO.logDebug(s"Ollama raw response: $responseString")
+        ollamaResponse <- ZIO.fromEither(responseString.fromJson[OllamaChatResponse])
+          .mapError(e => new Exception(s"Failed to decode Ollama response: $e"))
+        _ <- ZIO.foreach(ollamaResponse.message.thinking) { thinkingMsg =>
+          ZIO.logInfo(s"Model is thinking: $thinkingMsg")
         }
-      ollamaResponse <- ZIO.fromEither(response.fromJson[OllamaChatResponse])
-        .mapError(e => new Exception(s"Failed to decode Ollama response: $e"))
-      _ <- ZIO.logInfo("Received non-streaming response from Ollama.")
-    } yield ollamaResponse
+        _ <- ZIO.logInfo("Received non-streaming response from Ollama.")
+      } yield ollamaResponse
+    }
   }
 
   def streamChat(request: OllamaChatRequest): ZStream[Any, Throwable, OllamaChatResponse] = {
-    ZStream.fromZIO(ZIO.logInfo(s"Sending streaming request to Ollama model: ${request.model}")) *>
+    val finalRequest = prepareRequest(request)
+    ZStream.fromZIO(ZIO.logInfo(s"Sending streaming request to Ollama model: ${finalRequest.model}")) *>
       ZStream.unwrap(ZIO.scoped {
-        client.request(Request.post(URL.decode(OLLAMA_API_URL).toOption.get, Body.fromString(request.toJson))).map { response =>
+        client.request(Request.post(URL.decode(OLLAMA_API_URL).toOption.get, Body.fromString(finalRequest.toJson))).map { response =>
           if (response.status.isSuccess) {
             response.body.asStream
               .via(ZPipeline.utf8Decode >>> ZPipeline.splitLines) // Stream of JSON strings
@@ -44,7 +56,11 @@ case class OllamaClientLive(client: Client) extends OllamaClient {
                 ZIO.fromEither(line.fromJson[OllamaChatResponse])
                   .mapError(e => new Exception(s"Stream decoding failed: $e on line: $line"))
               }
-              .tap(r => if (r.done) ZIO.logInfo("Ollama stream finished.") else ZIO.unit)
+              .tap { r =>
+                ZIO.foreach(r.message.thinking) { thinkingMsg =>
+                  ZIO.logInfo(s"Ollama is thinking: $thinkingMsg")
+                } *> ZIO.when(r.done)(ZIO.logInfo("Ollama stream finished."))
+              }
           } else {
             ZStream.fromZIO(response.body.asString.flatMap(body => ZIO.fail(new Exception(s"Ollama stream request failed with status ${response.status}: $body"))))
           }
