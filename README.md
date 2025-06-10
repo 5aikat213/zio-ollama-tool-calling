@@ -9,7 +9,7 @@ To get started, you'll need `sbt` installed.
 Clone the repository:
 ```bash
 git clone <repository-url>
-cd zio-ollama-chat
+cd <directory>
 ```
 
 ## Building the project
@@ -25,6 +25,8 @@ To run the application, use the following `sbt` command:
 ```bash
 sbt run
 ```
+
+**NOTE** : You would need a `TAVILY_API_KEY` to use the websearch functionality. You can get it from : [here](https://app.tavily.com/home)
 
 The application will start on `http://localhost:9000`.
 
